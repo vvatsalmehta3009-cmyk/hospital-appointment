@@ -499,9 +499,23 @@ export default function BookingPage() {
             </div>
           ) : (
             <div className="p-8 rounded-2xl bg-white border border-slate-200 text-center text-slate-500">
-              <AlertCircle className="w-8 h-8 text-slate-400 mx-auto mb-2" />
-              <p className="font-bold text-sm text-slate-700">No sessions scheduled for today</p>
-              <p className="text-xs text-slate-500 mt-0.5">Please check back when the doctor opens the next session.</p>
+              <AlertCircle className="w-8 h-8 text-amber-500 mx-auto mb-2" />
+              <p className="font-bold text-sm text-slate-800">
+                {errorMessage || "No active sessions found"}
+              </p>
+              <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+                {errorMessage
+                  ? "Could not connect to the clinic database. Please check your connection and tap retry."
+                  : "Tap retry to reload today's schedule."}
+              </p>
+              <button
+                type="button"
+                onClick={loadSessionsData}
+                className="mt-4 px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold transition-all shadow-xs inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
+                <span>Retry Loading Sessions</span>
+              </button>
             </div>
           )}
 

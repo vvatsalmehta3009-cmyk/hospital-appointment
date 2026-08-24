@@ -1,7 +1,7 @@
 "use server";
 
 import { prisma } from "@/lib/prisma";
-import { startOfDay, format, parse, addHours, isBefore, isAfter } from "date-fns";
+import { startOfDay, endOfDay, format, parse, addHours, isBefore, isAfter } from "date-fns";
 
 export interface HourlySlot {
   slotKey: string;           // e.g. "09:00-10:00"
@@ -33,21 +33,35 @@ export interface SessionWithSlots {
 export async function getTodaySessions() {
   try {
     const todayStart = startOfDay(new Date());
+    const todayEnd = endOfDay(new Date());
 
-    // 1. Active Doctor
+    // 1. Get or Auto-Create Active Doctor if database is new
     let doctor = await prisma.doctor.findFirst({
       where: { isActiveToday: true },
     });
     if (!doctor) doctor = await prisma.doctor.findFirst();
 
     if (!doctor) {
-      return { error: "No active doctor found." };
+      doctor = await prisma.doctor.create({
+        data: {
+          name: "Dr. Sarah Jenkins, MD",
+          specialization: "Family Medicine & General Health",
+          qualifications: "MBBS, MD (Internal Medicine), FACP",
+          experienceYears: 14,
+          avatarUrl: "https://images.unsplash.com/photo-1559839734-2b71ea197ec2?auto=format&fit=crop&q=80&w=300",
+          isActiveToday: true,
+          consultationFee: 25,
+        },
+      });
     }
 
-    // 2. Fetch all sessions for today
-    const sessions = await prisma.clinicSession.findMany({
+    // 2. Fetch all sessions for today (using range for timezone resilience)
+    let sessions = await prisma.clinicSession.findMany({
       where: {
-        date: todayStart,
+        date: {
+          gte: todayStart,
+          lte: todayEnd,
+        },
         doctorId: doctor.id,
       },
       include: {
@@ -61,6 +75,39 @@ export async function getTodaySessions() {
         startTime: "asc",
       },
     });
+
+    // 3. Self-Healing: If it's a new day or no sessions exist for today, auto-create today's sessions!
+    if (sessions.length === 0) {
+      const s1 = await prisma.clinicSession.create({
+        data: {
+          sessionName: "Session 1: Morning OPD (3 Hours)",
+          date: todayStart,
+          startTime: "09:00",
+          endTime: "12:00",
+          status: "OPEN",
+          doctorId: doctor.id,
+        },
+        include: {
+          appointments: true,
+        },
+      });
+
+      const s2 = await prisma.clinicSession.create({
+        data: {
+          sessionName: "Session 2: Evening OPD (3 Hours)",
+          date: todayStart,
+          startTime: "16:00",
+          endTime: "19:00",
+          status: "OPEN",
+          doctorId: doctor.id,
+        },
+        include: {
+          appointments: true,
+        },
+      });
+
+      sessions = [s1, s2];
+    }
 
     const now = new Date();
     const currentDateBase = new Date();
@@ -78,8 +125,6 @@ export async function getTodaySessions() {
 
       while (isBefore(currentHourStart, endDateTime)) {
         const currentHourEnd = addHours(currentHourStart, 1);
-        
-        // Prevent overshoot beyond session endTime
         const effectiveEnd = isAfter(currentHourEnd, endDateTime) ? endDateTime : currentHourEnd;
 
         const slotStartFormatted = format(currentHourStart, "hh:mm a");
@@ -87,8 +132,7 @@ export async function getTodaySessions() {
         const slotDisplay = `${slotStartFormatted} - ${slotEndFormatted}`;
         const slotKey = `${format(currentHourStart, "HH:mm")}-${format(effectiveEnd, "HH:mm")}`;
 
-        // Count appointments booked for this specific 1-hour slot
-        const slotAppointments = session.appointments.filter((apt) => apt.slotTime === slotDisplay);
+        const slotAppointments = (session.appointments || []).filter((apt) => apt.slotTime === slotDisplay);
         const tokensBooked = slotAppointments.length;
         const maxTokens = 10; // Exactly 10 bookings per 1-hour slot
         const tokensRemaining = Math.max(0, maxTokens - tokensBooked);
@@ -124,7 +168,7 @@ export async function getTodaySessions() {
       }
 
       const totalCapacity = slots.length * 10;
-      const totalBooked = session.appointments.length;
+      const totalBooked = (session.appointments || []).length;
 
       return {
         id: session.id,
@@ -146,9 +190,9 @@ export async function getTodaySessions() {
       currentTimeFormatted: format(now, "hh:mm a"),
       sessions: formattedSessions,
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error fetching today's sessions:", error);
-    return { error: "Failed to load clinic sessions." };
+    return { error: error?.message || "Failed to load clinic sessions from database." };
   }
 }
 
@@ -175,7 +219,7 @@ export async function lookupPatientProfile(identifier: string) {
 
 export async function bookSessionAppointment(data: {
   sessionId: string;
-  slotTime: string; // e.g. "09:00 AM - 10:00 AM"
+  slotTime: string;
   patientName: string;
   patientPhone: string;
   patientEmail?: string;
@@ -199,7 +243,6 @@ export async function bookSessionAppointment(data: {
       return { error: "Selected clinic session does not exist." };
     }
 
-    // Check slot capacity (max 10 bookings per 1-hour slot)
     const slotCount = await prisma.appointment.count({
       where: {
         sessionId: session.id,
@@ -214,7 +257,6 @@ export async function bookSessionAppointment(data: {
       };
     }
 
-    // Check duplicate active booking for this phone in the same slot
     const existing = await prisma.appointment.findFirst({
       where: {
         sessionId: session.id,
@@ -231,7 +273,6 @@ export async function bookSessionAppointment(data: {
       };
     }
 
-    // Upsert patient profile for future 1-click booking
     try {
       await prisma.patient.upsert({
         where: { phone: patientPhone.trim() },
@@ -249,7 +290,6 @@ export async function bookSessionAppointment(data: {
       // ignore
     }
 
-    // Find next sequential token in this session
     const latestApt = await prisma.appointment.findFirst({
       where: { sessionId: session.id },
       orderBy: { tokenNumber: "desc" },
@@ -257,7 +297,6 @@ export async function bookSessionAppointment(data: {
 
     const nextToken = latestApt ? latestApt.tokenNumber + 1 : 1;
 
-    // Create the appointment with slotTime
     const appointment = await prisma.appointment.create({
       data: {
         tokenNumber: nextToken,
@@ -289,8 +328,8 @@ export async function bookSessionAppointment(data: {
         doctorName: appointment.doctor.name,
       },
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error booking hourly slot appointment:", error);
-    return { error: "Failed to book appointment. Please try again." };
+    return { error: error?.message || "Failed to book appointment. Please try again." };
   }
 }

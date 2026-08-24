@@ -1,0 +1,79 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Doctor {
+  id              String          @id @default(cuid())
+  name            String
+  specialization  String
+  qualifications  String
+  experienceYears Int             @default(10)
+  avatarUrl       String?
+  isActiveToday   Boolean         @default(true)
+  consultationFee Int             @default(30)
+  sessions        ClinicSession[]
+  appointments    Appointment[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+}
+
+model Patient {
+  id        String   @id @default(cuid())
+  phone     String   @unique
+  name      String
+  email     String?
+  googleId  String?
+  avatarUrl String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ClinicSession {
+  id           String        @id @default(cuid())
+  sessionName  String        // e.g. "Morning Session", "Evening Session"
+  date         DateTime      // Date of the session (start of day)
+  startTime    String        // "09:00" (24h format)
+  endTime      String        // "12:00" (24h format - 3 hours)
+  status       String        @default("OPEN") // SCHEDULED, OPEN, IN_PROGRESS, COMPLETED, CANCELLED
+  
+  doctorId     String
+  doctor       Doctor        @relation(fields: [doctorId], references: [id])
+  
+  appointments Appointment[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([date, status])
+}
+
+model Appointment {
+  id              String         @id @default(cuid())
+  tokenNumber     Int            // Sequential token (1, 2, 3...)
+  patientName     String
+  patientPhone    String
+  patientEmail    String?
+  appointmentDate DateTime       // Date formatted without time
+  slotTime        String?        // e.g. "09:00 AM - 10:00 AM" (1-hour slot)
+  status          String         @default("BOOKED") // BOOKED, CHECKED_IN, IN_PROGRESS, COMPLETED, SKIPPED, CANCELLED
+  bookingSource   String         @default("ONLINE") // ONLINE, WALK_IN
+  notes           String?
+  checkedInAt     DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
+
+  sessionId       String?
+  session         ClinicSession? @relation(fields: [sessionId], references: [id])
+
+  doctorId        String
+  doctor          Doctor         @relation(fields: [doctorId], references: [id])
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([appointmentDate, status])
+}

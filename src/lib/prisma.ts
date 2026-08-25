@@ -1,15 +1,19 @@
 import { PrismaClient } from "@prisma/client";
 
-// Resolve database URL from standard or Vercel Postgres environment variables
-const dbUrl =
-  process.env.DATABASE_URL ||
-  process.env.POSTGRES_PRISMA_URL ||
-  process.env.POSTGRES_URL ||
-  process.env.DATABASE_URL_UNPOOLED;
+// Ensure DATABASE_URL is available for Prisma
+function getDatabaseUrl() {
+  return (
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_PRISMA_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.DATABASE_URL_UNPOOLED ||
+    ""
+  );
+}
 
-// Set process.env.DATABASE_URL if missing so Prisma internals don't error
-if (dbUrl && !process.env.DATABASE_URL) {
-  process.env.DATABASE_URL = dbUrl;
+const resolvedUrl = getDatabaseUrl();
+if (resolvedUrl && !process.env.DATABASE_URL) {
+  process.env.DATABASE_URL = resolvedUrl;
 }
 
 const globalForPrisma = global as unknown as { prisma: PrismaClient };
@@ -17,7 +21,7 @@ const globalForPrisma = global as unknown as { prisma: PrismaClient };
 export const prisma =
   globalForPrisma.prisma ||
   new PrismaClient({
-    datasources: dbUrl ? { db: { url: dbUrl } } : undefined,
+    datasources: resolvedUrl ? { db: { url: resolvedUrl } } : undefined,
     log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
   });
 
